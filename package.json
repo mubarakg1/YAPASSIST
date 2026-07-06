@@ -2,18 +2,19 @@
   "name": "yapsweep",
   "version": "1.0.0",
   "description": "",
-  "main": "index.js",
+  "main": "server.js",
   "scripts": {
-    "start": "node index.js",
+    "start": "node server.js",
     "test": "echo \"Error: no test specified\" && exit 1",
     "build-css": "tailwindcss -i ./public/input.css -o ./public/output.css --minify",
-    "dev":"tailwindcss -i ./public/input.css -o ./public/output.css --minify"
+    "dev": "tailwindcss -i ./public/input.css -o ./public/output.css --minify"
   },
   "keywords": [],
   "author": "",
   "license": "ISC",
   "dependencies": {
     "@tailwindcss/postcss": "^4.1.17",
+    "dotenv": "^17.4.2",
     "express": "^5.1.0"
   },
   "devDependencies": {
