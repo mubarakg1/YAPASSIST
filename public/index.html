@@ -23,12 +23,23 @@
         --amber: #e8a93e;
         --teal: #3fa796;
         --danger: #e5484d;
+        --pink: #ec4899;
+        --blue: #3b82f6;
+        --purple: #a855f7;
+        --green: #22c55e;
+        --orange: #f97316;
+        --yellow: #eab308;
       }
 
       * { box-sizing: border-box; }
 
       body {
-        background: var(--bg);
+        background:
+          radial-gradient(circle at 8% 8%, rgba(63, 167, 150, 0.16), transparent 42%),
+          radial-gradient(circle at 92% 18%, rgba(236, 72, 153, 0.14), transparent 45%),
+          radial-gradient(circle at 50% 95%, rgba(232, 169, 62, 0.12), transparent 40%),
+          var(--bg);
+        background-attachment: fixed;
         color: var(--text);
         font-family: "Inter", sans-serif;
       }
@@ -36,10 +47,19 @@
       .font-display { font-family: "Chakra Petch", sans-serif; }
       .font-mono { font-family: "JetBrains Mono", monospace; }
 
+      .title-gradient {
+        background: linear-gradient(90deg, #3fa796, #e8a93e, #ec4899);
+        -webkit-background-clip: text;
+        background-clip: text;
+        color: transparent;
+      }
+
       .panel {
         background: var(--panel);
         border: 1px solid var(--border);
-        border-radius: 10px;
+        border-radius: 12px;
+        border-top: 3px solid var(--accent, var(--border));
+        transition: border-color 0.2s ease;
       }
 
       .eyebrow {
@@ -60,24 +80,46 @@
         border-color: var(--teal);
       }
 
-      /* Segmented batch meter - the signature element */
+      .btn {
+        transition: transform 0.12s ease, box-shadow 0.2s ease, filter 0.2s ease;
+      }
+      .btn:hover { transform: translateY(-1px); filter: brightness(1.08); }
+      .btn:active { transform: translateY(0) scale(0.98); }
+
+      .btn-teal { background: linear-gradient(135deg, #3fa796, #2c8a7c); color: #0d1210; box-shadow: 0 4px 14px rgba(63,167,150,0.25); }
+      .btn-amber { background: linear-gradient(135deg, #e8a93e, #d18f22); color: #241a05; box-shadow: 0 4px 14px rgba(232,169,62,0.25); }
+      .btn-ghost {
+        background: var(--panel-2);
+        border: 1px solid var(--border);
+        color: var(--muted);
+      }
+      .btn-ghost:hover { color: var(--text); border-color: var(--pink); }
+
+      /* Segmented batch meter - the signature element, now gradient-animated */
       .meter-segment {
         height: 10px;
         flex: 1;
-        border-radius: 2px;
+        border-radius: 3px;
         background: var(--border);
-        transition: background 0.25s ease;
+        transition: background 0.25s ease, transform 0.2s ease;
       }
-      .meter-segment.filled { background: var(--teal); }
-      .meter-segment.locked { background: var(--danger); }
+      .meter-segment.filled {
+        background: linear-gradient(135deg, #3fa796, #2fd9c2);
+        box-shadow: 0 0 8px rgba(63,167,150,0.5);
+      }
+      .meter-segment.locked {
+        background: linear-gradient(135deg, #e5484d, #ff7a7f);
+        box-shadow: 0 0 8px rgba(229,72,77,0.5);
+      }
 
       .override-btn {
-        background: var(--danger);
+        background: linear-gradient(135deg, #e5484d, #ff6b6f);
         color: #fff;
         font-family: "JetBrains Mono", monospace;
         letter-spacing: 0.04em;
-        transition: opacity 0.2s ease, transform 0.1s ease;
+        transition: opacity 0.2s ease, transform 0.1s ease, filter 0.2s ease;
       }
+      .override-btn:not(:disabled):hover { filter: brightness(1.1); transform: translateY(-1px); }
       .override-btn:disabled {
         background: var(--border);
         color: var(--muted);
@@ -91,23 +133,23 @@
         border-radius: 8px;
         font-family: "JetBrains Mono", monospace;
         font-size: 13px;
-        transition: opacity 0.2s ease;
+        transition: opacity 0.2s ease, border-color 0.2s ease, transform 0.15s ease;
       }
       .link-row.locked { opacity: 0.4; pointer-events: none; }
       .link-row.claimed { opacity: 0.55; border-color: var(--teal); }
       .link-row:not(.locked):not(.claimed):hover {
-        border-color: var(--teal);
+        border-color: var(--pink);
         cursor: pointer;
+        transform: translateX(2px);
       }
 
       .tag {
         font-family: "JetBrains Mono", monospace;
         font-size: 10px;
-        padding: 2px 6px;
-        border-radius: 4px;
-        background: rgba(63, 167, 150, 0.15);
-        color: var(--teal);
+        padding: 2px 7px;
+        border-radius: 999px;
         white-space: nowrap;
+        font-weight: 600;
       }
 
       ::placeholder { color: var(--muted); opacity: 0.7; }
@@ -121,7 +163,7 @@
       style="background: rgba(0,0,0,0.75);"
     >
       <div class="panel p-6 rounded-lg shadow-lg w-11/12 max-w-sm text-center">
-        <h2 class="font-display text-xl font-semibold mb-2">Welcome</h2>
+        <h2 class="font-display text-xl font-semibold mb-2">Welcome 👋</h2>
         <p class="mb-4 text-sm" style="color: var(--muted);">
           Support the project by following the
           <a
@@ -134,8 +176,7 @@
         </p>
         <button
           id="close-modal"
-          class="w-full px-4 py-2 rounded font-medium"
-          style="background: var(--teal); color: #0d1210;"
+          class="btn btn-teal w-full px-4 py-2 rounded font-medium"
         >
           Got it
         </button>
@@ -145,14 +186,14 @@
     <div class="w-full max-w-md sm:max-w-2xl">
       <!-- Header -->
       <div class="flex items-baseline justify-between mb-4 mt-2">
-        <h1 class="font-display text-2xl sm:text-3xl font-bold tracking-tight">
+        <h1 class="font-display title-gradient text-2xl sm:text-3xl font-bold tracking-tight">
           YAPASSIST
         </h1>
-        <span class="eyebrow">reply console</span>
+        <span class="eyebrow">reply console ✨</span>
       </div>
 
       <!-- LOGIN -->
-      <div class="panel p-4 sm:p-5 mb-3" id="login-panel">
+      <div class="panel p-4 sm:p-5 mb-3" id="login-panel" style="--accent: var(--pink);">
         <p class="eyebrow mb-2">identity</p>
         <p class="text-sm mb-3" style="color: var(--muted);">
           Enter your X username and a PIN. First time using a username sets its PIN;
@@ -175,8 +216,7 @@
         </div>
         <button
           id="login-submit"
-          class="w-full px-4 py-2 rounded font-medium text-sm"
-          style="background: var(--teal); color: #0d1210;"
+          class="btn btn-teal w-full px-4 py-2 rounded font-medium text-sm"
         >
           Continue
         </button>
@@ -190,14 +230,14 @@
       </div>
 
       <!-- Safety notice -->
-      <div class="panel p-3 mb-3">
+      <div class="panel p-3 mb-3" style="--accent: var(--amber);">
         <p class="text-sm" style="color: var(--amber);">
-          Pace your engagement — replying too fast risks suspension from X.
+          ⚠️ Pace your engagement — replying too fast risks suspension from X.
         </p>
       </div>
 
       <!-- INPUT -->
-      <div class="panel p-4 sm:p-5 mb-3">
+      <div class="panel p-4 sm:p-5 mb-3" style="--accent: var(--blue);">
         <p class="eyebrow mb-2">01 · input</p>
         <label class="block font-medium mb-1 text-sm">Paste X links</label>
         <textarea
@@ -206,17 +246,25 @@
           class="w-full p-2 rounded text-sm font-mono"
           placeholder="Paste text containing x.com or twitter.com links..."
         ></textarea>
-        <button
-          id="extract-links"
-          class="mt-2 w-full px-4 py-2 rounded font-medium text-sm"
-          style="background: var(--teal); color: #0d1210;"
-        >
-          Extract links
-        </button>
+        <div class="flex gap-2 mt-2">
+          <button
+            id="extract-links"
+            class="btn btn-teal flex-1 px-4 py-2 rounded font-medium text-sm"
+          >
+            Extract links
+          </button>
+          <button
+            id="clear-links-input"
+            class="btn btn-ghost px-4 py-2 rounded font-medium text-sm"
+            type="button"
+          >
+            Clear
+          </button>
+        </div>
       </div>
 
       <!-- PACING -->
-      <div class="panel p-4 sm:p-5 mb-3">
+      <div class="panel p-4 sm:p-5 mb-3" style="--accent: var(--purple);">
         <p class="eyebrow mb-3">02 · pacing</p>
 
         <div class="flex gap-3 mb-4">
@@ -260,19 +308,18 @@
       </div>
 
       <!-- GENERATE -->
-      <div class="panel p-4 sm:p-5 mb-3">
+      <div class="panel p-4 sm:p-5 mb-3" style="--accent: var(--green);">
         <p class="eyebrow mb-2">03 · generate</p>
         <button
           id="generate-comment"
-          class="w-full px-4 py-2 rounded font-medium text-sm"
-          style="background: var(--amber); color: #241a05;"
+          class="btn btn-amber w-full px-4 py-2 rounded font-medium text-sm"
         >
-          Generate comments
+          Generate comments ⚡
         </button>
       </div>
 
       <!-- QUEUE -->
-      <div class="panel p-4 sm:p-5 mb-6">
+      <div class="panel p-4 sm:p-5 mb-6" style="--accent: var(--pink);">
         <p class="eyebrow mb-3">04 · queue</p>
         <ul id="link-list" class="space-y-2"></ul>
       </div>

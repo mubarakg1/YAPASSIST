@@ -1,6 +1,7 @@
 // ====== DOM ELEMENTS ======
 const linksInput = document.getElementById("links-input");
 const extractBtn = document.getElementById("extract-links");
+const clearLinksInputBtn = document.getElementById("clear-links-input");
 const generateBtn = document.getElementById("generate-comment");
 const linkList = document.getElementById("link-list");
 const batchSizeInput = document.getElementById("batch-size");
@@ -725,6 +726,23 @@ const clearLinkList = () => {
   linkList.innerHTML = "";
 };
 
+// Pick a distinct color per category/source so the queue reads as lively
+// and scannable, not one flat color for everything.
+function getTagColor(source) {
+  const s = (source || "").toLowerCase();
+  if (s.startsWith("topic:")) return { bg: "rgba(20, 184, 166, 0.18)", fg: "#2dd4bf" };
+  if (s === "ai") return { bg: "rgba(168, 85, 247, 0.18)", fg: "#c084fc" };
+  if (s === "playful") return { bg: "rgba(217, 70, 239, 0.18)", fg: "#e879f9" };
+  if (s === "gm") return { bg: "rgba(234, 179, 8, 0.18)", fg: "#facc15" };
+  if (s === "gn") return { bg: "rgba(99, 102, 241, 0.18)", fg: "#818cf8" };
+  if (s.includes("announcement")) return { bg: "rgba(59, 130, 246, 0.18)", fg: "#60a5fa" };
+  if (s.includes("product")) return { bg: "rgba(168, 85, 247, 0.18)", fg: "#c084fc" };
+  if (s.includes("growth")) return { bg: "rgba(34, 197, 94, 0.18)", fg: "#4ade80" };
+  if (s.includes("community")) return { bg: "rgba(236, 72, 153, 0.18)", fg: "#f472b6" };
+  if (s.includes("market")) return { bg: "rgba(249, 115, 22, 0.18)", fg: "#fb923c" };
+  return { bg: "rgba(63, 167, 150, 0.18)", fg: "#3fa796" }; // generic fallback
+}
+
 // Display clickable links styled as console rows, with category tag chips.
 // Locking/unlocking is entirely driven by the batch-gate system (see
 // applyBatchLocks / updatePacingUI above) - this function just builds the rows.
@@ -756,6 +774,9 @@ const displayLinks = (restoredState) => {
     const tag = document.createElement("span");
     tag.className = "tag";
     tag.textContent = pair.source;
+    const tagColor = getTagColor(pair.source);
+    tag.style.background = tagColor.bg;
+    tag.style.color = tagColor.fg;
 
     if (pair.claimed) {
       // Restoring a link that was already claimed before reload - render
@@ -821,6 +842,13 @@ extractBtn.addEventListener("click", () => {
   alert(`Extracted ${extractedLinks.length} links.`);
 });
 
+if (clearLinksInputBtn) {
+  clearLinksInputBtn.addEventListener("click", () => {
+    linksInput.value = "";
+    linksInput.focus();
+  });
+}
+
 // ==== GENERATE COMMENT BUTTON ====
 generateBtn.addEventListener("click", async () => {
   if (!extractedLinks.length) {
@@ -879,6 +907,8 @@ generateBtn.addEventListener("click", async () => {
 
   generateBtn.disabled = false;
   generateBtn.textContent = originalLabel;
+
+  linksInput.value = ""; // ready for the next batch of links to be pasted
 
   displayLinks();
   saveSession();

@@ -3,7 +3,7 @@
     "its_veteran1": {
       "pin": "234902",
       "batchSize": 19,
-      "cooldownSeconds": 9
+      "cooldownSeconds": 107
     }
   },
   "claims": {
@@ -46,6 +46,22 @@
     "2073994953974276357": {
       "username": "its_veteran1",
       "claimedAt": 1783336072289
+    },
+    "2073974609834320173": {
+      "username": "its_veteran1",
+      "claimedAt": 1783338819347
+    },
+    "2073992458703405562": {
+      "username": "its_veteran1",
+      "claimedAt": 1783338874515
+    },
+    "2073979778605211908": {
+      "username": "its_veteran1",
+      "claimedAt": 1783338891557
+    },
+    "2073998654034055630": {
+      "username": "its_veteran1",
+      "claimedAt": 1783338920126
     }
   },
   "sessions": {
@@ -56,7 +72,7 @@
           "link": "https://x.com/nft_acekings/status/2073974609834320173",
           "comment": "Growth trends here are showing strong momentum.",
           "source": "generic",
-          "claimed": false
+          "claimed": true
         },
         {
           "link": "https://x.com/jadacrypt/status/2073995444598775976",
@@ -74,13 +90,13 @@
           "link": "https://x.com/Amor_Web3/status/2073992458703405562",
           "comment": "The Ethra Ship angle here is genuinely worth paying attention to.",
           "source": "topic:\"Ethra Ship\"",
-          "claimed": false
+          "claimed": true
         },
         {
           "link": "https://x.com/Paulxbtc/status/2073979778605211908",
           "comment": "This Nucleus Codes take is more thought-out than most replies I see lol",
           "source": "topic:\"Nucleus Codes\"",
-          "claimed": false
+          "claimed": true
         },
         {
           "link": "https://x.com/Enzoxbtc/status/2073995800640946576",
@@ -92,7 +108,7 @@
           "link": "http://x.com/bakaleeeer/status/2073998654034055630",
           "comment": "GM, hope the charts are kind to you today.",
           "source": "gm",
-          "claimed": false
+          "claimed": true
         },
         {
           "link": "https://x.com/elnukss/status/2073071613512134919",
@@ -108,10 +124,10 @@
         }
       ],
       "activeBatchStart": 0,
-      "claimsInBatch": 0,
+      "claimsInBatch": 4,
       "batchLocked": false,
       "cooldownUntil": 0,
-      "savedAt": 1783337028501
+      "savedAt": 1783338920122
     }
   }
 }
