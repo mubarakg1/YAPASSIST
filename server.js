@@ -81,41 +81,6 @@ app.post("/settings", (req, res) => {
   res.json({ ok: true, settings: user });
 });
 
-// ====== SESSION PERSISTENCE ======
-// Saves your in-progress queue (generated comments + which links are already
-// claimed) and batch/pacing state, tied to your account - so a reload (or
-// logging in from another device) picks up right where you left off.
-app.post("/session/save", (req, res) => {
-  const username = normalizeUsername(req.body.username);
-  const pin = (req.body.pin || "").trim();
-  const { session } = req.body;
-
-  const data = loadData();
-  const user = data.users[username];
-
-  if (!user || user.pin !== pin) {
-    return res.json({ ok: false, reason: "auth_failed" });
-  }
-
-  data.sessions[username] = { ...session, savedAt: Date.now() };
-  saveData(data);
-  res.json({ ok: true });
-});
-
-app.post("/session/load", (req, res) => {
-  const username = normalizeUsername(req.body.username);
-  const pin = (req.body.pin || "").trim();
-
-  const data = loadData();
-  const user = data.users[username];
-
-  if (!user || user.pin !== pin) {
-    return res.json({ ok: false, reason: "auth_failed" });
-  }
-
-  res.json({ ok: true, session: data.sessions[username] || null });
-});
-
 // ====== SHARED CLAIM TRACKING ======
 // Keyed by tweet ID (not raw URL) so x.com vs twitter.com vs trailing
 // query params don't cause the same tweet to look like different links.

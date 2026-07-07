@@ -4,6 +4,11 @@
       "pin": "234902",
       "batchSize": 19,
       "cooldownSeconds": 107
+    },
+    "yyyy": {
+      "pin": "123456",
+      "batchSize": 10,
+      "cooldownSeconds": 30
     }
   },
   "claims": {

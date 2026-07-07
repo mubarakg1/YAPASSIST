@@ -8,7 +8,6 @@ const batchSizeInput = document.getElementById("batch-size");
 const pacingSecondsInput = document.getElementById("pacing-seconds");
 const pacingStatus = document.getElementById("pacing-status");
 const overrideCooldownBtn = document.getElementById("override-cooldown");
-const batchMeter = document.getElementById("batch-meter");
 
 const loginPanel = document.getElementById("login-panel");
 const loginUsernameInput = document.getElementById("login-username");
@@ -17,29 +16,37 @@ const loginSubmitBtn = document.getElementById("login-submit");
 const loginError = document.getElementById("login-error");
 const appContent = document.getElementById("app-content");
 const loggedInAs = document.getElementById("logged-in-as");
+const loggedInAsTop = document.getElementById("logged-in-as-top");
 const logoutBtn = document.getElementById("logout-btn");
+const progressFill = document.getElementById("progress-fill");
+const progressPercent = document.getElementById("progress-percent");
 
 // ====== AUTH STATE ======
 // Lightweight username+PIN identity - not real security, just enough to
 // stop casual impersonation of a teammate's public X handle.
 let currentUser = { username: null, pin: null };
 
-function showLoggedIn(username, settings) {
+function showLoggedIn(username) {
   currentUser = { username, pin: loginPinInput.value.trim() };
   localStorage.setItem("yapassist_username", username);
   localStorage.setItem("yapassist_pin", currentUser.pin);
 
-  if (settings) {
-    batchSizeInput.value = settings.batchSize;
-    pacingSecondsInput.value = settings.cooldownSeconds;
-  }
+  // Always start clean on reload/login: default pacing, empty queue, empty
+  // input. The only thing that persists across reload is the shared
+  // "already engaged" claim history (checked separately at generate time),
+  // so you never lose track of what's already been replied to.
+  batchSizeInput.value = 10;
+  pacingSecondsInput.value = 30;
+  linksInput.value = "";
+  extractedLinks = [];
+  linkCommentPairs = [];
+  displayLinks();
 
-  loggedInAs.textContent = `logged in as @${username}`;
+  loggedInAs.textContent = `@${username}`;
+  loggedInAsTop.textContent = `@${username}`;
   loginPanel.style.display = "none";
   appContent.style.display = "block";
   loginError.style.display = "none";
-
-  restoreSession();
 }
 
 function showLoginError(message) {
@@ -57,7 +64,7 @@ async function attemptLogin(username, pin) {
     const data = await res.json();
 
     if (data.ok) {
-      showLoggedIn(username.trim().replace(/^@/, "").toLowerCase(), data.settings);
+      showLoggedIn(username.trim().replace(/^@/, "").toLowerCase());
     } else if (data.reason === "wrong_pin") {
       showLoginError("Wrong PIN for that username. If this isn't your handle, pick a different one.");
     } else if (data.reason === "invalid_pin") {
@@ -88,6 +95,15 @@ if (logoutBtn) {
     currentUser = { username: null, pin: null };
     loginUsernameInput.value = "";
     loginPinInput.value = "";
+
+    // Fully reset so nothing from this account bleeds into the next login
+    linksInput.value = "";
+    extractedLinks = [];
+    linkCommentPairs = [];
+    batchSizeInput.value = 10;
+    pacingSecondsInput.value = 30;
+    displayLinks();
+
     appContent.style.display = "none";
     loginPanel.style.display = "block";
   });
@@ -104,88 +120,8 @@ if (logoutBtn) {
   }
 })();
 
-// Persist personal settings (batch size / cooldown) whenever changed
-async function saveSettings() {
-  if (!currentUser.username) return;
-  try {
-    await fetch("/settings", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        username: currentUser.username,
-        pin: currentUser.pin,
-        batchSize: parseInt(batchSizeInput.value, 10),
-        cooldownSeconds: parseInt(pacingSecondsInput.value, 10),
-      }),
-    });
-  } catch (err) {
-    console.error("Failed to save settings:", err);
-  }
-}
-batchSizeInput.addEventListener("change", saveSettings);
-pacingSecondsInput.addEventListener("change", saveSettings);
-
-// ====== SESSION PERSISTENCE ======
-// Saves the in-progress queue (generated comments + claimed status) and
-// batch/pacing state under your account, so reloading the page - or logging
-// in from another device - picks up right where you left off.
-let sessionRestoring = false; // guard so restore doesn't immediately re-save over itself
-
-async function saveSession() {
-  if (!currentUser.username || sessionRestoring) return;
-  try {
-    await fetch("/session/save", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        username: currentUser.username,
-        pin: currentUser.pin,
-        session: {
-          linksInputText: linksInput.value,
-          linkCommentPairs,
-          activeBatchStart,
-          claimsInBatch,
-          batchLocked,
-          cooldownUntil,
-        },
-      }),
-    });
-  } catch (err) {
-    console.error("Failed to save session:", err);
-  }
-}
-
-async function restoreSession() {
-  if (!currentUser.username) return;
-  try {
-    const res = await fetch("/session/load", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ username: currentUser.username, pin: currentUser.pin }),
-    });
-    const data = await res.json();
-    if (!data.ok || !data.session) return;
-
-    sessionRestoring = true;
-
-    const s = data.session;
-    if (s.linksInputText) linksInput.value = s.linksInputText;
-    if (Array.isArray(s.linkCommentPairs) && s.linkCommentPairs.length) {
-      linkCommentPairs = s.linkCommentPairs;
-      extractedLinks = linkCommentPairs.map((p) => p.link);
-      displayLinks({
-        activeBatchStart: s.activeBatchStart || 0,
-        claimsInBatch: s.claimsInBatch || 0,
-        batchLocked: !!s.batchLocked,
-        cooldownUntil: s.cooldownUntil || 0,
-      });
-    }
-
-    sessionRestoring = false;
-  } catch (err) {
-    console.error("Failed to restore session:", err);
-  }
-}
+// Batch size / cooldown are session-only now (reset to defaults on every
+// login/reload) - no server persistence needed for these anymore.
 
 // ====== DATA STORAGE ======
 let extractedLinks = [];
@@ -217,21 +153,6 @@ function startCooldown() {
   cooldownUntil = Date.now() + safeSecs * 1000;
 }
 
-// Render the segmented meter for the current batch (filled = claimed so far)
-function renderBatchMeter() {
-  if (!batchMeter) return;
-  const size = getBatchSize();
-  batchMeter.innerHTML = "";
-  for (let i = 0; i < size; i++) {
-    const seg = document.createElement("div");
-    seg.className = "meter-segment";
-    if (i < claimsInBatch) {
-      seg.classList.add(batchLocked ? "locked" : "filled");
-    }
-    batchMeter.appendChild(seg);
-  }
-}
-
 // Lock/unlock the actual link rows based on batch window + lock state
 function applyBatchLocks() {
   const size = getBatchSize();
@@ -246,6 +167,9 @@ function applyBatchLocks() {
 }
 
 function updatePacingUI() {
+  const size = getBatchSize();
+  const percent = size > 0 ? Math.round((claimsInBatch / size) * 100) : 0;
+
   if (batchLocked && !isOnCooldown()) {
     // Countdown finished, but batch stays closed until Override is pressed
     overrideCooldownBtn.disabled = false;
@@ -258,12 +182,13 @@ function updatePacingUI() {
     pacingStatus.style.color = "var(--danger)";
   } else {
     overrideCooldownBtn.disabled = true;
-    const size = getBatchSize();
-    pacingStatus.textContent = `${claimsInBatch}/${size} used this batch`;
+    pacingStatus.textContent = `${claimsInBatch} of ${size} replies sent`;
     pacingStatus.style.color = "var(--teal)";
   }
 
-  renderBatchMeter();
+  if (progressFill) progressFill.style.width = `${percent}%`;
+  if (progressPercent) progressPercent.textContent = `${percent}%`;
+
   applyBatchLocks();
 }
 
@@ -276,7 +201,6 @@ if (overrideCooldownBtn) {
     claimsInBatch = 0;
     activeBatchStart += getBatchSize();
     updatePacingUI();
-    saveSession();
   });
 }
 
@@ -766,7 +690,7 @@ const displayLinks = (restoredState) => {
 
   linkCommentPairs.forEach((pair, index) => {
     const li = document.createElement("li");
-    li.className = "link-row p-3 flex items-center justify-between gap-2";
+    li.className = "link-row p-3 flex items-center gap-2";
 
     const linkText = document.createElement("span");
     linkText.className = "truncate flex-1";
@@ -778,18 +702,38 @@ const displayLinks = (restoredState) => {
     tag.style.background = tagColor.bg;
     tag.style.color = tagColor.fg;
 
+    const statusText = document.createElement("span");
+    statusText.className = "text-xs";
+    statusText.style.color = "var(--muted)";
+
+    const skipBtn = document.createElement("button");
+    skipBtn.className = "skip-btn";
+    skipBtn.type = "button";
+    skipBtn.title = "Remove from queue";
+    skipBtn.textContent = "✕";
+    skipBtn.addEventListener("click", (e) => {
+      e.stopPropagation(); // don't trigger the row's claim handler
+      linkCommentPairs.splice(index, 1);
+      displayLinks(); // batch position resets on any queue edit - simplest correct behavior
+    });
+
     if (pair.claimed) {
       // Restoring a link that was already claimed before reload - render
       // it as claimed immediately, no click handler needed.
       li.dataset.claimed = "true";
       linkText.textContent = pair.link + " ✓ claimed";
+      statusText.textContent = "claimed";
       li.classList.add("claimed");
       li.appendChild(linkText);
+      li.appendChild(statusText);
     } else {
       li.dataset.claimed = "false";
       linkText.textContent = pair.link;
+      statusText.textContent = "active";
       li.appendChild(linkText);
       li.appendChild(tag);
+      li.appendChild(statusText);
+      li.appendChild(skipBtn);
 
       li.addEventListener("click", function handler() {
         if (li.classList.contains("locked")) return; // batch gate guard
@@ -806,12 +750,13 @@ const displayLinks = (restoredState) => {
         pair.claimed = true;
         li.dataset.claimed = "true";
         linkText.textContent = pair.link + " ✓ claimed";
+        statusText.textContent = "claimed";
         tag.remove();
+        skipBtn.remove();
         li.classList.add("claimed");
         li.removeEventListener("click", handler);
 
         registerClaim();
-        saveSession();
 
         // Record it server-side so teammates see this as already handled.
         // The reply tab already opened above regardless of this result.
@@ -911,7 +856,6 @@ generateBtn.addEventListener("click", async () => {
   linksInput.value = ""; // ready for the next batch of links to be pasted
 
   displayLinks();
-  saveSession();
 
   if (skipped.length) {
     const byWhom = [...new Set(skipped.map((s) => `@${s.claimedBy}`))].join(", ");
