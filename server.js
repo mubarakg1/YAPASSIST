@@ -11,18 +11,20 @@ app.use(express.static("public")); // serve frontend files
 // Structure:
 // {
 //   users: { [username]: { pin, batchSize, cooldownSeconds } },
-//   claims: { [tweetId]: { username, claimedAt } },
-//   sessions: { [username]: { linksInputText, linkCommentPairs, activeBatchStart, claimsInBatch, batchLocked, cooldownUntil, savedAt } }
+//   claims: { [username]: { [tweetId]: claimedAt } }   <- per-account history,
+//     NOT a global lock. Different accounts replying to the same tweet is
+//     normal (many people can reply to one viral tweet) - the only thing
+//     to prevent is the SAME account replying to the same tweet twice.
 // }
 const DATA_FILE = path.join(__dirname, "data.json");
 
 function loadData() {
   try {
     const data = JSON.parse(fs.readFileSync(DATA_FILE, "utf8"));
-    if (!data.sessions) data.sessions = {};
+    if (!data.claims) data.claims = {};
     return data;
   } catch (err) {
-    return { users: {}, claims: {}, sessions: {} };
+    return { users: {}, claims: {} };
   }
 }
 
@@ -81,16 +83,26 @@ app.post("/settings", (req, res) => {
   res.json({ ok: true, settings: user });
 });
 
-// ====== SHARED CLAIM TRACKING ======
-// Keyed by tweet ID (not raw URL) so x.com vs twitter.com vs trailing
-// query params don't cause the same tweet to look like different links.
+// ====== PER-ACCOUNT CLAIM TRACKING ======
+// Checks whether THIS logged-in account has already replied to each tweet ID.
+// Other accounts' claims are irrelevant here on purpose - different people
+// replying to the same tweet is normal and expected.
 app.post("/check-claims", (req, res) => {
+  const username = normalizeUsername(req.body.username);
+  const pin = (req.body.pin || "").trim();
   const tweetIds = Array.isArray(req.body.tweetIds) ? req.body.tweetIds : [];
-  const data = loadData();
 
+  const data = loadData();
+  const user = data.users[username];
+
+  if (!user || user.pin !== pin) {
+    return res.json({ ok: false, reason: "auth_failed" });
+  }
+
+  const myClaims = data.claims[username] || {};
   const claims = {};
   tweetIds.forEach((id) => {
-    if (data.claims[id]) claims[id] = data.claims[id];
+    if (myClaims[id]) claims[id] = { claimedAt: myClaims[id] };
   });
 
   res.json({ ok: true, claims });
@@ -110,13 +122,8 @@ app.post("/claim", (req, res) => {
     return res.json({ ok: false, reason: "auth_failed" });
   }
 
-  const existingClaim = data.claims[tweetId];
-  if (existingClaim && existingClaim.username !== username) {
-    // Someone else already got to this one - don't overwrite their claim
-    return res.json({ ok: false, alreadyClaimed: true, claimedBy: existingClaim.username });
-  }
-
-  data.claims[tweetId] = { username, claimedAt: Date.now() };
+  if (!data.claims[username]) data.claims[username] = {};
+  data.claims[username][tweetId] = Date.now();
   saveData(data);
   res.json({ ok: true });
 });

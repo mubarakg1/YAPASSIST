@@ -608,15 +608,19 @@ function extractTweetId(link) {
   return match ? match[1] : null;
 }
 
-// Ask the server which of these tweet IDs are already claimed by anyone
-// on the team, so we don't send you to reply to something a teammate
-// already handled.
+// Ask the server whether YOUR account specifically has already replied to
+// each tweet ID - other accounts' claims don't matter here, since different
+// people replying to the same tweet is normal.
 async function checkSharedClaims(tweetIds) {
   try {
     const res = await fetch("/check-claims", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ tweetIds }),
+      body: JSON.stringify({
+        username: currentUser.username,
+        pin: currentUser.pin,
+        tweetIds,
+      }),
     });
     const data = await res.json();
     return data.claims || {};
@@ -626,7 +630,8 @@ async function checkSharedClaims(tweetIds) {
   }
 }
 
-// Record that this tweet has been replied to, so teammates see it as claimed.
+// Record that YOU have replied to this tweet, so a future batch on your
+// own account doesn't send you back to it.
 async function recordClaim(tweetId) {
   try {
     const res = await fetch("/claim", {
@@ -758,13 +763,9 @@ const displayLinks = (restoredState) => {
 
         registerClaim();
 
-        // Record it server-side so teammates see this as already handled.
-        // The reply tab already opened above regardless of this result.
-        recordClaim(tweetId).then((result) => {
-          if (result && result.ok === false && result.reason === "already_claimed") {
-            linkText.textContent = pair.link + ` ✓ claimed (note: @${result.claimedBy} also had this one)`;
-          }
-        });
+        // Record it under your account so a future batch of yours doesn't
+        // send you back to this same tweet.
+        recordClaim(tweetId);
       });
     }
 
@@ -803,9 +804,10 @@ generateBtn.addEventListener("click", async () => {
 
   generateBtn.disabled = true;
   const originalLabel = generateBtn.textContent;
-  generateBtn.textContent = "Checking team claims...";
+  generateBtn.textContent = "Checking your history...";
 
-  // Skip anything a teammate (or you, from another device) already replied to.
+  // Skip anything YOU already replied to (from this account, any device) -
+  // other accounts' claims don't factor in here on purpose.
   const tweetIdMap = extractedLinks.map((link) => ({ link, tweetId: extractTweetId(link) }));
   const validTweetIds = tweetIdMap.filter((x) => x.tweetId).map((x) => x.tweetId);
   const claims = await checkSharedClaims(validTweetIds);
@@ -814,7 +816,7 @@ generateBtn.addEventListener("click", async () => {
   const linksToProcess = tweetIdMap
     .filter(({ tweetId }) => {
       if (tweetId && claims[tweetId]) {
-        skipped.push({ tweetId, claimedBy: claims[tweetId].username });
+        skipped.push(tweetId);
         return false;
       }
       return true;
@@ -858,7 +860,6 @@ generateBtn.addEventListener("click", async () => {
   displayLinks();
 
   if (skipped.length) {
-    const byWhom = [...new Set(skipped.map((s) => `@${s.claimedBy}`))].join(", ");
-    alert(`Skipped ${skipped.length} tweet(s) already claimed by: ${byWhom}`);
+    alert(`Skipped ${skipped.length} tweet(s) you've already replied to.`);
   }
 });
