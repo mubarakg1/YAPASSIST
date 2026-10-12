@@ -14,8 +14,14 @@
   "license": "ISC",
   "dependencies": {
     "@tailwindcss/postcss": "^4.1.17",
+    "bcryptjs": "^3.0.3",
+    "connect-pg-simple": "^10.0.0",
     "dotenv": "^17.4.2",
-    "express": "^5.1.0"
+    "express": "^5.1.0",
+    "express-session": "^1.19.0",
+    "passport": "^0.7.0",
+    "passport-google-oauth20": "^2.0.0",
+    "pg": "^8.23.1"
   },
   "devDependencies": {
     "@tailwindcss/cli": "^4.1.17",

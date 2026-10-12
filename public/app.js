@@ -1,865 +1,972 @@
-// ====== DOM ELEMENTS ======
+// ============================================================
+// YAPASSIST - AI REPLY GENERATOR
+// Flow:
+// X URL -> server-side oEmbed -> Gemini batch job -> replies
+// ============================================================
+
+// ============================================================
+// DOM ELEMENTS
+// ============================================================
+
 const linksInput = document.getElementById("links-input");
 const extractBtn = document.getElementById("extract-links");
 const clearLinksInputBtn = document.getElementById("clear-links-input");
 const generateBtn = document.getElementById("generate-comment");
 const linkList = document.getElementById("link-list");
+
 const batchSizeInput = document.getElementById("batch-size");
 const pacingSecondsInput = document.getElementById("pacing-seconds");
 const pacingStatus = document.getElementById("pacing-status");
 const overrideCooldownBtn = document.getElementById("override-cooldown");
 
 const loginPanel = document.getElementById("login-panel");
-const loginUsernameInput = document.getElementById("login-username");
-const loginPinInput = document.getElementById("login-pin");
-const loginSubmitBtn = document.getElementById("login-submit");
 const loginError = document.getElementById("login-error");
+
 const appContent = document.getElementById("app-content");
 const loggedInAs = document.getElementById("logged-in-as");
 const loggedInAsTop = document.getElementById("logged-in-as-top");
 const logoutBtn = document.getElementById("logout-btn");
+
 const progressFill = document.getElementById("progress-fill");
 const progressPercent = document.getElementById("progress-percent");
 
-// ====== AUTH STATE ======
-// Lightweight username+PIN identity - not real security, just enough to
-// stop casual impersonation of a teammate's public X handle.
-let currentUser = { username: null, pin: null };
+// ============================================================
+// AUTH STATE: GOOGLE SESSION
+// ============================================================
 
-function showLoggedIn(username) {
-  currentUser = { username, pin: loginPinInput.value.trim() };
-  localStorage.setItem("yapassist_username", username);
-  localStorage.setItem("yapassist_pin", currentUser.pin);
+let currentUser = {
+    id: null,
+    email: null,
+    displayName: null,
+    legacyUsername: null
+};
 
-  // Always start clean on reload/login: default pacing, empty queue, empty
-  // input. The only thing that persists across reload is the shared
-  // "already engaged" claim history (checked separately at generate time),
-  // so you never lose track of what's already been replied to.
-  batchSizeInput.value = 10;
-  pacingSecondsInput.value = 30;
-  linksInput.value = "";
-  extractedLinks = [];
-  linkCommentPairs = [];
-  displayLinks();
+function showLoggedIn(user) {
+    currentUser = {
+        id: user.id,
+        email: user.email,
+        displayName: user.displayName,
+        legacyUsername: user.legacyUsername
+    };
 
-  loggedInAs.textContent = `@${username}`;
-  loggedInAsTop.textContent = `@${username}`;
-  loginPanel.style.display = "none";
-  appContent.style.display = "block";
-  loginError.style.display = "none";
-}
+    batchSizeInput.value = 10;
+    pacingSecondsInput.value = 30;
 
-function showLoginError(message) {
-  loginError.textContent = message;
-  loginError.style.display = "block";
-}
-
-async function attemptLogin(username, pin) {
-  try {
-    const res = await fetch("/auth", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ username, pin }),
-    });
-    const data = await res.json();
-
-    if (data.ok) {
-      showLoggedIn(username.trim().replace(/^@/, "").toLowerCase());
-    } else if (data.reason === "wrong_pin") {
-      showLoginError("Wrong PIN for that username. If this isn't your handle, pick a different one.");
-    } else if (data.reason === "invalid_pin") {
-      showLoginError("PIN must be 4-6 digits.");
-    } else {
-      showLoginError("Enter a username to continue.");
-    }
-  } catch (err) {
-    console.error("Login request failed:", err);
-    showLoginError("Couldn't reach the server. Is it running?");
-  }
-}
-
-if (loginSubmitBtn) {
-  loginSubmitBtn.addEventListener("click", () => {
-    const username = loginUsernameInput.value.trim();
-    const pin = loginPinInput.value.trim();
-    if (!username) return showLoginError("Enter your X username.");
-    if (!/^\d{4,6}$/.test(pin)) return showLoginError("PIN must be 4-6 digits.");
-    attemptLogin(username, pin);
-  });
-}
-
-if (logoutBtn) {
-  logoutBtn.addEventListener("click", () => {
-    localStorage.removeItem("yapassist_username");
-    localStorage.removeItem("yapassist_pin");
-    currentUser = { username: null, pin: null };
-    loginUsernameInput.value = "";
-    loginPinInput.value = "";
-
-    // Fully reset so nothing from this account bleeds into the next login
     linksInput.value = "";
     extractedLinks = [];
     linkCommentPairs = [];
-    batchSizeInput.value = 10;
-    pacingSecondsInput.value = 30;
+
     displayLinks();
 
-    appContent.style.display = "none";
-    loginPanel.style.display = "block";
-  });
+    const accountLabel = user.legacyUsername
+        ? `@${user.legacyUsername}`
+        : user.displayName || user.email;
+
+    loggedInAs.textContent = accountLabel;
+    loggedInAsTop.textContent = accountLabel;
+
+    loginPanel.style.display = "none";
+    appContent.style.display = "block";
+
+    loginError.style.display = "none";
 }
 
-// Auto-login on page load if this device remembers a username+PIN
-(function tryAutoLogin() {
-  const savedUsername = localStorage.getItem("yapassist_username");
-  const savedPin = localStorage.getItem("yapassist_pin");
-  if (savedUsername && savedPin) {
-    loginUsernameInput.value = savedUsername;
-    loginPinInput.value = savedPin;
-    attemptLogin(savedUsername, savedPin);
-  }
-})();
+function showLoginError(message) {
+    loginError.textContent = message;
+    loginError.style.display = "block";
+}
 
-// Batch size / cooldown are session-only now (reset to defaults on every
-// login/reload) - no server persistence needed for these anymore.
+async function checkGoogleSession() {
+    try {
+        const response = await fetch("/api/me");
+        const data = await response.json();
 
-// ====== DATA STORAGE ======
+        if (response.ok && data.ok && data.user) {
+            showLoggedIn(data.user);
+            return;
+        }
+
+        currentUser = {
+            id: null,
+            email: null,
+            displayName: null,
+            legacyUsername: null
+        };
+
+        appContent.style.display = "none";
+        loginPanel.style.display = "block";
+
+        const params = new URLSearchParams(window.location.search);
+
+        if (params.get("login") === "failed") {
+            showLoginError("Google sign-in failed. Please try again.");
+            window.history.replaceState(
+                {},
+                "",
+                window.location.pathname
+            );
+        }
+    } catch (error) {
+        console.error("Session check failed:", error);
+        appContent.style.display = "none";
+        loginPanel.style.display = "block";
+        showLoginError(
+            "Couldn't reach the server. Please refresh and try again."
+        );
+    }
+}
+
+if (logoutBtn) {
+    logoutBtn.addEventListener("click", async () => {
+        try {
+            const response = await fetch("/auth/logout", {
+                method: "POST"
+            });
+
+            const data = await response.json();
+
+            if (!response.ok || !data.ok) {
+                throw new Error("Logout failed");
+            }
+
+            currentUser = {
+                id: null,
+                email: null,
+                displayName: null,
+                legacyUsername: null
+            };
+
+            linksInput.value = "";
+            extractedLinks = [];
+            linkCommentPairs = [];
+
+            batchSizeInput.value = 10;
+            pacingSecondsInput.value = 30;
+
+            displayLinks();
+
+            appContent.style.display = "none";
+            loginPanel.style.display = "block";
+        } catch (error) {
+            console.error("Logout failed:", error);
+            alert("Couldn't log out. Please try again.");
+        }
+    });
+}
+
+checkGoogleSession();
+
+
+// ============================================================
+// DATA STORAGE
+// ============================================================
 let extractedLinks = [];
 let linkCommentPairs = [];
-let liElements = []; // one per linkCommentPairs entry, in order
 
-// ====== PACING CONTROLS (batch gate) ======
-// A fixed number of links are open at a time. Once that batch is fully
-// claimed, everything locks. The countdown is a MINIMUM wait - once it
-// hits zero the Override button becomes pressable, but the next batch
-// only opens when you actually press it. Nothing auto-resumes.
-let activeBatchStart = 0; // index of first link in the current open batch
+let liElements = [];
+let activeBatchStart = 0;
 let claimsInBatch = 0;
 let batchLocked = false;
 let cooldownUntil = 0;
 
+let activeGenerationJobId = null;
+let generationResultsSeen = new Set();
+// ============================================================
+// PACING CONTROLS
+// ============================================================
+
 function getBatchSize() {
-  const n = parseInt(batchSizeInput.value, 10);
-  return Number.isFinite(n) && n > 0 ? n : 10;
+    const value = parseInt(batchSizeInput?.value, 10);
+
+    return Number.isFinite(value) && value > 0 ? value : 10;
 }
 
 function isOnCooldown() {
-  return Date.now() < cooldownUntil;
+    return Date.now() < cooldownUntil;
 }
 
 function startCooldown() {
-  const secs = parseInt(pacingSecondsInput.value, 10);
-  const safeSecs = Number.isFinite(secs) && secs > 0 ? secs : 0;
-  cooldownUntil = Date.now() + safeSecs * 1000;
+    const seconds = parseInt(pacingSecondsInput?.value, 10);
+    const safeSeconds = Number.isFinite(seconds) && seconds > 0
+        ? seconds
+        : 0;
+
+    cooldownUntil = Date.now() + safeSeconds * 1000;
 }
 
-// Lock/unlock the actual link rows based on batch window + lock state
 function applyBatchLocks() {
-  const size = getBatchSize();
-  liElements.forEach((li, i) => {
-    if (li.dataset.claimed === "true") return; // leave claimed rows alone
+    const size = getBatchSize();
 
-    const inActiveWindow = i >= activeBatchStart && i < activeBatchStart + size;
-    const shouldLock = batchLocked || !inActiveWindow;
+    liElements.forEach((element, index) => {
+        if (!element) return;
+        if (element.dataset.claimed === "true") return;
+        if (element.dataset.failed === "true") return;
 
-    li.classList.toggle("locked", shouldLock);
-  });
+        const inActiveWindow =
+            index >= activeBatchStart &&
+            index < activeBatchStart + size;
+
+        element.classList.toggle(
+            "locked",
+            batchLocked || !inActiveWindow
+        );
+    });
 }
 
 function updatePacingUI() {
-  const size = getBatchSize();
-  const percent = size > 0 ? Math.round((claimsInBatch / size) * 100) : 0;
+    const size = getBatchSize();
 
-  if (batchLocked && !isOnCooldown()) {
-    // Countdown finished, but batch stays closed until Override is pressed
-    overrideCooldownBtn.disabled = false;
-    pacingStatus.textContent = "batch limit reached — press override to continue";
-    pacingStatus.style.color = "var(--danger)";
-  } else if (batchLocked) {
-    const remaining = Math.ceil((cooldownUntil - Date.now()) / 1000);
-    overrideCooldownBtn.disabled = true;
-    pacingStatus.textContent = `batch limit reached — ${remaining}s remaining`;
-    pacingStatus.style.color = "var(--danger)";
-  } else {
-    overrideCooldownBtn.disabled = true;
-    pacingStatus.textContent = `${claimsInBatch} of ${size} replies sent`;
-    pacingStatus.style.color = "var(--teal)";
-  }
+    const percent = size > 0
+        ? Math.min(100, Math.round((claimsInBatch / size) * 100))
+        : 0;
 
-  if (progressFill) progressFill.style.width = `${percent}%`;
-  if (progressPercent) progressPercent.textContent = `${percent}%`;
+    if (pacingStatus) {
+        if (batchLocked && !isOnCooldown()) {
+            if (overrideCooldownBtn) overrideCooldownBtn.disabled = false;
 
-  applyBatchLocks();
+            pacingStatus.textContent =
+                "Batch limit reached — press override to continue";
+
+            pacingStatus.style.color = "var(--danger)";
+        } else if (batchLocked) {
+            const remaining = Math.max(
+                0,
+                Math.ceil((cooldownUntil - Date.now()) / 1000)
+            );
+
+            if (overrideCooldownBtn) overrideCooldownBtn.disabled = true;
+
+            pacingStatus.textContent =
+                `Batch limit reached — ${remaining}s remaining`;
+
+            pacingStatus.style.color = "var(--danger)";
+        } else {
+            if (overrideCooldownBtn) overrideCooldownBtn.disabled = true;
+
+            pacingStatus.textContent =
+                `${claimsInBatch} of ${size} replies sent`;
+
+            pacingStatus.style.color = "var(--teal)";
+        }
+    }
+
+    if (progressFill) {
+        progressFill.style.width = `${percent}%`;
+    }
+
+    if (progressPercent) {
+        progressPercent.textContent = `${percent}%`;
+    }
+
+    applyBatchLocks();
 }
 
 setInterval(updatePacingUI, 500);
 
 if (overrideCooldownBtn) {
-  overrideCooldownBtn.addEventListener("click", () => {
-    if (!batchLocked || isOnCooldown()) return; // guard: only usable once countdown is done
-    batchLocked = false;
-    claimsInBatch = 0;
-    activeBatchStart += getBatchSize();
-    updatePacingUI();
-  });
+    overrideCooldownBtn.addEventListener("click", () => {
+        if (!batchLocked || isOnCooldown()) return;
+
+        batchLocked = false;
+        claimsInBatch = 0;
+        activeBatchStart += getBatchSize();
+
+        updatePacingUI();
+    });
 }
 
-// Called every time a link is actually claimed (reply opened)
 function registerClaim() {
-  claimsInBatch++;
-  if (claimsInBatch >= getBatchSize()) {
-    batchLocked = true;
-    startCooldown();
-  }
-  updatePacingUI();
-}
+    claimsInBatch++;
 
-// ====== GENERIC / FALLBACK COMMENTS ======
-// Used when categorization can't confidently match a tweet, or the
-// oEmbed fetch fails (deleted/protected tweet, rate limit, etc).
-const genericComments = [
-  "The project’s execution has been consistently impressive.",
-  "Growth trends here are showing strong momentum.",
-  "The roadmap looks realistic and achievable.",
-  "Execution speed has exceeded expectations.",
-  "Progress updates show tangible results.",
-  "The team is clearly committed to long-term success.",
-  "Momentum is building steadily over time.",
-  "Strategic partnerships will likely accelerate growth.",
-  "The roadmap shows a clear path to milestones.",
-  "Market adoption is showing positive signals.",
-  "Execution quality has been consistent throughout.",
-  "Progress is being delivered on schedule.",
-  "The team’s focus on long-term goals is evident.",
-  "The project is scaling effectively.",
-  "Roadmap milestones are ambitious but realistic.",
-  "Strong momentum is visible across updates.",
-  "Execution and vision are well aligned.",
-  "The project shows resilience in challenging markets.",
-  "Growth metrics indicate a positive trajectory.",
-  "The team is demonstrating high accountability.",
-];
-
-// ====== CATEGORY-SPECIFIC COMMENT BANKS ======
-// Mix of straight/professional lines and lighter, humorous ones.
-// Emojis (where used) are facial expressions only.
-const categoryComments = {
-  announcement: [
-    "Big moves like this usually set the tone for what's next.",
-    "Launches like this are worth keeping an eye on.",
-    "This kind of announcement tends to shift momentum fast.",
-    "Solid timing on this rollout.",
-    "This is the kind of update that gets a project noticed.",
-    "Clean launch, curious how adoption tracks from here.",
-    "This puts the project in a good spot heading forward.",
-    "Okay this actually snuck up on me, wasn't expecting it this soon 👀",
-    "Every time I think I'm caught up, another launch drops lol",
-  ],
-  product: [
-    "The technical direction here is genuinely solid.",
-    "This kind of infra work is what separates real builders.",
-    "Good to see the product side getting this much attention.",
-    "This integration should make a real difference in usability.",
-    "The build quality on this is clear.",
-    "This feature closes a gap a lot of users have been asking about.",
-    "Solid engineering decision here.",
-    "The kind of feature you don't notice until it's missing elsewhere 😅",
-    "Underrated update, this is doing more work than people realize.",
-  ],
-  growth: [
-    "These numbers are trending in a genuinely good direction.",
-    "Adoption curves like this are worth tracking closely.",
-    "That's meaningful growth for this stage of the project.",
-    "The metrics back up the momentum here.",
-    "This kind of traction doesn't happen by accident.",
-    "Steady growth like this is a good sign for what's ahead.",
-    "The numbers speak for themselves here.",
-    "Charts looking healthier than my sleep schedule 😂",
-    "Slow and steady apparently does win sometimes.",
-  ],
-  community: [
-    "The community energy around this is genuinely strong.",
-    "This is the kind of engagement that builds real loyalty.",
-    "Good to see the community showing up like this.",
-    "This kind of culture is hard to manufacture.",
-    "The community's response says a lot here.",
-    "This is a good reminder of why the community matters so much.",
-    "The replies here are more entertaining than the actual post lol",
-    "This community shows up harder than some paid teams 😄",
-  ],
-  market: [
-    "Interesting move given current market conditions.",
-    "Worth watching how this plays out against the broader market.",
-    "This kind of price action tends to draw attention fast.",
-    "The market seems to be reacting to this already.",
-    "Timing relative to the market here is notable.",
-    "Market really said not today and did its own thing 😅",
-  ],
-  question: [
-    "Good question, curious to see how the team responds.",
-    "This is worth a real answer, not just a quick reply.",
-    "Interesting angle to raise here.",
-    "This is the kind of question that gets overlooked too often.",
-    "Fair point, would like to see more clarity on this.",
-    "Ngl this is the question everyone's been avoiding lol",
-  ],
-  gm: [
-    "GM ☀️",
-    "GM, hope the charts are kind to you today.",
-    "GM to everyone still up refreshing this app at 2am 😅",
-    "GM, another day another timeline to scroll through.",
-    "GM 🙂 let's see what today breaks or builds.",
-    "GM, coffee first then chaos.",
-    "GM fam, ready for whatever today throws at us.",
-  ],
-  gn: [
-    "GN 🌙",
-    "GN, may your bags be green when you wake up.",
-    "GN everyone, closing tabs before I close my eyes.",
-    "GN, today was a lot lol.",
-    "GN 😴 see you on the timeline tomorrow.",
-    "GN, resting up for tomorrow's inevitable chaos.",
-  ],
-  // Used when a tweet is a poll / "this or that" / clearly playful format,
-  // regardless of what topic category it also matched.
-  playful: [
-    "Okay this is actually a hard pick 😅",
-    "No way I have to choose, both slap.",
-    "This is the real test of the community right here lol",
-    "I already know the replies are gonna be chaos 😂",
-    "Tough one, gonna lurk the replies before I commit.",
-    "This kind of post always brings out the real ones lol",
-    "Can't believe this is the debate we're having today 😄",
-    "Not me actually thinking about this longer than I should.",
-  ],
-};
-
-// ====== KEYWORD MAP FOR CATEGORIZATION ======
-const categoryKeywords = {
-  announcement: ["launch", "launching", "live now", "mainnet", "release", "released", "drop", "dropping", "listing", "listed", "introducing", "unveil"],
-  product: ["feature", "protocol", "upgrade", "integration", "infrastructure", "built", "building", "sdk", "api", "smart contract", "architecture"],
-  growth: ["users", "volume", "tvl", "adoption", "milestone", "growth", "active", "transactions", "onboarded", "scaling"],
-  community: ["fam", "community", "vibes", "together", "family", "shoutout", "collab", "partners", "ecosystem"],
-  market: ["price", "chart", "pump", "ath", "market cap", "mcap", "trading", "liquidity", "bullish", "bearish"],
-  question: ["?"],
-  gm: ["gm", "good morning", "morning fam", "rise and grind"],
-  gn: ["gn", "good night", "goodnight", "night fam", "off to bed"],
-};
-
-// Cleaner display form for keywords that read awkwardly raw (acronyms, etc.)
-const keywordLabels = {
-  tvl: "TVL",
-  api: "API",
-  sdk: "SDK",
-  ath: "ATH",
-  mcap: "market cap",
-  "smart contract": "smart contract",
-  "live now": "launch",
-};
-
-// Comment templates with a {kw} slot filled by the actual matched keyword,
-// so the reply references what the tweet is really about instead of a
-// purely generic line from the category's static pool.
-const categoryTemplates = {
-  announcement: [
-    "This kind of {kw} is exactly what gets a project noticed.",
-    "The timing on this {kw} looks solid.",
-    "Curious how adoption tracks after this {kw}.",
-  ],
-  product: [
-    "This kind of {kw} work is what separates real builders.",
-    "The {kw} focus here is genuinely what stands out.",
-    "Good {kw} decisions like this compound over time.",
-  ],
-  growth: [
-    "That {kw} trend is worth tracking closely.",
-    "Solid {kw} numbers for this stage of the project.",
-    "The {kw} here backs up the momentum.",
-  ],
-  market: [
-    "That {kw} move is worth watching closely.",
-    "Interesting {kw} action given current conditions.",
-  ],
-};
-
-function escapeRegExp(s) {
-  return s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-}
-
-// Score tweet text against each category, return { category, score, keyword }
-// where keyword is the specific matched term (used for word-correlated replies).
-// Uses word-boundary matching so short keywords (e.g. "ath", "api") don't
-// false-positive inside unrelated words (e.g. "path", "capital").
-function categorizeTweet(text) {
-  if (!text) return { category: "generic", score: 0, keyword: null };
-
-  let bestCategory = "generic";
-  let bestScore = 0;
-  let bestKeyword = null;
-
-  for (const [category, keywords] of Object.entries(categoryKeywords)) {
-    let score = 0;
-    let matched = [];
-    for (const kw of keywords) {
-      const isMatch =
-        kw === "?"
-          ? text.includes("?")
-          : new RegExp(`\\b${escapeRegExp(kw)}\\b`, "i").test(text);
-
-      if (isMatch) {
-        score++;
-        matched.push(kw);
-      }
+    if (claimsInBatch >= getBatchSize()) {
+        batchLocked = true;
+        startCooldown();
     }
-    if (score > bestScore) {
-      bestScore = score;
-      bestCategory = category;
-      // Prefer the longest matched keyword - usually the most specific/meaningful
-      bestKeyword = matched.sort((a, b) => b.length - a.length)[0] || null;
-    }
-  }
 
-  return bestScore > 0
-    ? { category: bestCategory, score: bestScore, keyword: bestKeyword }
-    : { category: "generic", score: 0, keyword: null };
+    updatePacingUI();
 }
 
-// Detect format/tone signals that keyword matching alone can't judge -
-// e.g. a "this or that" poll dressed up in community language.
-function detectFormatSignals(text) {
-  if (!text) return { playful: false, hype: false };
-
-  const playful =
-    /\bvs\.?\b|this\s+or\s+that|would\s+you\s+rather|pick\s+one|\bpoll\b|either\s*\/?\s*or/i.test(text) ||
-    (text.match(/[\u{1F600}-\u{1F64F}]/gu) || []).length >= 2;
-
-  const hype =
-    /!{2,}/.test(text) ||
-    /\b[A-Z]{4,}\b/.test(text.replace(/https?:\/\/\S+/g, "")); // ignore URLs when checking for shouting caps
-
-  return { playful, hype };
+function preservePacingState() {
+    return {
+        activeBatchStart,
+        claimsInBatch,
+        batchLocked,
+        cooldownUntil
+    };
 }
 
-// ====== GENERIC TOPIC EXTRACTION ======
-// This is the fallback that actually scales: instead of relying on a fixed
-// keyword list (which only covers typical "web3 growth" vocabulary), pull
-// the real subject straight out of the tweet - a proper noun phrase, a
-// hashtag, or a mentioned project - so replies stay grounded in whatever
-// the tweet is actually about, no matter the niche.
+// ============================================================
+// X LINK EXTRACTION
+// ============================================================
 
-// Turn "WOO_WorldCup2026" or "_WOO_X" into readable "WOO World Cup 2026" / "WOO X"
-function humanizeTag(raw) {
-  let s = raw.replace(/^[#@_]+/, "").replace(/_+$/, "");
-  s = s.split("_").join(" ");
-  s = s.replace(/([a-z])([A-Z])/g, "$1 $2"); // camelCase -> spaced
-  s = s.replace(/([a-zA-Z])(\d)/g, "$1 $2"); // letter/digit boundary -> spaced
-  s = s.replace(/\s+/g, " ").trim();
-  return s;
-}
-
-function extractTopic(text) {
-  if (!text) return null;
-
-  // 1. Proper noun phrases - two or more consecutive capitalized words
-  // (e.g. "GenLayer Points", "Community Development Agreement").
-  // Requiring 2+ words filters out ordinary sentence-starting capitals.
-  const properNounRegex = /\b[A-Z][a-zA-Z0-9]*(?:\s+(?:&|and)\s+[A-Z][a-zA-Z0-9]*|\s+[A-Z][a-zA-Z0-9]*)+\b/g;
-  const properMatches = (text.match(properNounRegex) || [])
-    .map((m) => m.trim())
-    .filter((m) => {
-      const wordCount = m.split(/\s+/).length;
-      return wordCount >= 2 && wordCount <= 5;
-    })
-    .sort((a, b) => b.length - a.length);
-
-  if (properMatches.length) return properMatches[0];
-
-  // 2. Hashtags - almost always the actual campaign/topic name
-  const hashtagMatch = text.match(/#(\w+)/);
-  if (hashtagMatch) {
-    const label = humanizeTag(hashtagMatch[1]);
-    if (label.length >= 3) return label;
-  }
-
-  // 3. Mentioned project/handle as last resort
-  const mentionMatch = text.match(/@(\w+)/);
-  if (mentionMatch) {
-    const label = humanizeTag(mentionMatch[1]);
-    if (label.length >= 3) return label;
-  }
-
-  return null;
-}
-
-// Topic-agnostic templates - work for ANY subject since the {topic} slot
-// is filled dynamically. This is what keeps replies from feeling repetitive
-// across completely different kinds of tweets (contests, infra news,
-// philosophical threads, etc).
-const topicTemplates = [
-  "The {topic} angle here is genuinely worth paying attention to.",
-  "This kind of {topic} move doesn't happen without real intent behind it.",
-  "Solid effort on the {topic} front here.",
-  "Not gonna lie, the {topic} take caught my attention 👀",
-  "This is a creative way to approach {topic}.",
-  "The {topic} execution here stands out.",
-  "Curious to see where this {topic} goes from here.",
-  "This kind of {topic} energy is what gets noticed.",
-  "Didn't expect the {topic} angle, but it works 😄",
-  "Good use of {topic} here honestly.",
-  "This {topic} take is more thought-out than most replies I see lol",
-];
-
-function pickComment(category, signals, keyword, topic) {
-  // Priority order:
-  // 1. GM/GN - distinct greeting format, always use the dedicated bank
-  // 2. Playful format (polls, "this or that") - tone override
-  // 3. Extracted topic - the general-purpose fix, works for ANY subject
-  // 4. Category keyword match - narrower, web3-specific vocabulary
-  // 5. Generic fallback - last resort
-
-  if (category === "gm" || category === "gn") {
-    const pool = categoryComments[category];
-    return { comment: pool[Math.floor(Math.random() * pool.length)], source: category };
-  }
-
-  if (signals && signals.playful) {
-    const pool = categoryComments.playful;
-    return { comment: pool[Math.floor(Math.random() * pool.length)], source: "playful" };
-  }
-
-  // Topic extraction covers far more ground than the fixed keyword lists,
-  // so it takes priority most of the time even when a category also matched.
-  if (topic && Math.random() < 0.75) {
-    const template = topicTemplates[Math.floor(Math.random() * topicTemplates.length)];
-    return { comment: template.replace("{topic}", topic), source: `topic:"${topic}"` };
-  }
-
-  const templates = categoryTemplates[category];
-  if (keyword && templates && templates.length && Math.random() < 0.6) {
-    const label = keywordLabels[keyword] || keyword;
-    const template = templates[Math.floor(Math.random() * templates.length)];
-    return { comment: template.replace("{kw}", label), source: `${category} · "${keyword}"` };
-  }
-
-  const pool = categoryComments[category] && categoryComments[category].length
-    ? categoryComments[category]
-    : genericComments;
-
-  return {
-    comment: pool[Math.floor(Math.random() * pool.length)],
-    source: category === "generic" ? "generic" : category,
-  };
-}
-
-// Fetch tweet text via our server's oEmbed proxy
-async function fetchTweetText(link) {
-  try {
-    const res = await fetch(`/oembed?url=${encodeURIComponent(link)}`);
-    const data = await res.json();
-    if (data.ok) return data.text;
-    return null;
-  } catch (err) {
-    console.error("Failed to fetch oEmbed for", link, err);
-    return null;
-  }
-}
-
-// Ask the server to refine/replace the candidate comment using AI,
-// for cases the rule-based pass can't judge confidently.
-async function refineComment(tweetText, category, comment) {
-  try {
-    const res = await fetch("/refine", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ tweetText, category, comment }),
-    });
-    const data = await res.json();
-    if (data.ok && data.comment) return data.comment;
-    return null; // fall back to the rule-based comment silently
-  } catch (err) {
-    console.error("Refine request failed:", err);
-    return null;
-  }
-}
-
-// ====== FUNCTIONS ======
-
-// Extract only X/Twitter links that point to a tweet/status
 function extractLinks(text) {
-  if (!text) return [];
+    if (!text) return [];
 
-  const urlRegex = /https?:\/\/(?:www\.)?(?:x\.com|twitter\.com)\/[^\s)]+/gi;
-  const rawMatches = text.match(urlRegex) || [];
+    const urlRegex =
+        /https?:\/\/(?:www\.)?(?:x\.com|twitter\.com)\/[^\s)]+/gi;
 
-  const cleaned = rawMatches
-    .map(url => url.replace(/[.,)\]]+$/g, ""))
-    .filter(Boolean)
-    .filter(url => {
-      const numericIdAtEnd = /\/\d{3,20}(?:$|[?#])/;
-      const iWebStatus = /\/i\/web\/status\/\d{3,20}/;
-      return numericIdAtEnd.test(url) || iWebStatus.test(url);
-    });
+    const matches = text.match(urlRegex) || [];
 
-  return [...new Set(cleaned)];
+    const cleaned = matches
+        .map(url => url.replace(/[.,)\]}]+$/g, ""))
+        .filter(url => /\/status\/\d{3,30}/i.test(url));
+
+    return [...new Set(cleaned)];
 }
 
 function extractTweetId(link) {
-  const match = link.match(/status\/(\d+)/);
-  return match ? match[1] : null;
+    const match = String(link || "").match(/\/status\/(\d+)/i);
+    return match ? match[1] : null;
 }
 
-// Ask the server whether YOUR account specifically has already replied to
-// each tweet ID - other accounts' claims don't matter here, since different
-// people replying to the same tweet is normal.
-async function checkSharedClaims(tweetIds) {
-  try {
-    const res = await fetch("/check-claims", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        username: currentUser.username,
-        pin: currentUser.pin,
-        tweetIds,
-      }),
+// ============================================================
+// TWEET READING THROUGH THE SERVER'S OEMBED ENDPOINT
+// ============================================================
+
+async function fetchTweetsText(links) {
+    const results = {};
+    let nextIndex = 0;
+    const concurrency = 4;
+
+    async function worker() {
+        while (true) {
+            const index = nextIndex++;
+
+            if (index >= links.length) return;
+
+            const link = links[index];
+            const tweetId = extractTweetId(link);
+
+            if (!tweetId) {
+                results[tweetId || link] = null;
+                continue;
+            }
+
+            try {
+                const response = await fetch(
+                    `/oembed?url=${encodeURIComponent(link)}`
+                );
+
+                const data = await response.json();
+
+                if (!response.ok || !data.ok || !data.text) {
+                    throw new Error(
+                        data.message || "Could not read this X post."
+                    );
+                }
+
+                results[tweetId] = {
+                    tweetId,
+                    text: data.text
+                };
+            } catch (error) {
+                console.error("oEmbed read failed:", link, error);
+                results[tweetId] = null;
+            }
+        }
+    }
+
+    await Promise.all(
+        Array.from(
+            { length: Math.min(concurrency, links.length) },
+            () => worker()
+        )
+    );
+
+    return results;
+}
+
+// ============================================================
+// SINGLE-REPLY GENERATION FOR THE RETRY BUTTON
+// ============================================================
+
+
+async function generateAIReply(tweetText) {
+    const response = await fetch("/generate-reply", {
+        method: "POST",
+        headers: {
+            "Content-Type": "application/json"
+        },
+        body: JSON.stringify({
+            tweetText: tweetText
+        })
     });
-    const data = await res.json();
-    return data.claims || {};
-  } catch (err) {
-    console.error("check-claims request failed:", err);
-    return {}; // fail open - better to show all links than to block everything
-  }
+
+    const data = await response.json();
+
+    if (!response.ok || !data.ok) {
+        throw new Error(data.message || data.reason || "Failed to generate reply");
+    }
+
+    return data.comment;
 }
 
-// Record that YOU have replied to this tweet, so a future batch on your
-// own account doesn't send you back to it.
+// ============================================================
+// GENERATION STATUS
+// ============================================================
+
+let generationStatus = document.getElementById("generation-status");
+
+if (!generationStatus && linkList?.parentElement) {
+    generationStatus = document.createElement("p");
+    generationStatus.id = "generation-status";
+    generationStatus.className = "text-sm";
+    generationStatus.style.margin = "12px 0";
+    generationStatus.style.color = "var(--muted)";
+
+    linkList.parentElement.insertBefore(generationStatus, linkList);
+}
+
+function setGenerationStatus(message) {
+    if (generationStatus) {
+        generationStatus.textContent = message;
+    }
+}
+
+// ============================================================
+// CLAIM HISTORY
+// ============================================================
+
+
 async function recordClaim(tweetId) {
-  try {
-    const res = await fetch("/claim", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        username: currentUser.username,
-        pin: currentUser.pin,
-        tweetId,
-      }),
-    });
-    return await res.json();
-  } catch (err) {
-    console.error("claim request failed:", err);
-    return { ok: false, reason: "network_error" };
-  }
+    try {
+        const response = await fetch("/claim", {
+            method: "POST",
+            headers: {
+                "Content-Type": "application/json"
+            },
+           body: JSON.stringify({})
+        });
+
+        const data = await response.json();
+
+        if (!response.ok || !data.ok) {
+            throw new Error(data.message || "Could not save claim.");
+        }
+
+        return data;
+    } catch (error) {
+        console.error("Claim-save request failed:", error);
+
+        return {
+            ok: false,
+            reason: "claim_save_failed"
+        };
+    }
 }
 
-// Clear the displayed links
-const clearLinkList = () => {
-  linkList.innerHTML = "";
-};
 
-// Pick a distinct color per category/source so the queue reads as lively
-// and scannable, not one flat color for everything.
-function getTagColor(source) {
-  const s = (source || "").toLowerCase();
-  if (s.startsWith("topic:")) return { bg: "rgba(20, 184, 166, 0.18)", fg: "#2dd4bf" };
-  if (s === "ai") return { bg: "rgba(168, 85, 247, 0.18)", fg: "#c084fc" };
-  if (s === "playful") return { bg: "rgba(217, 70, 239, 0.18)", fg: "#e879f9" };
-  if (s === "gm") return { bg: "rgba(234, 179, 8, 0.18)", fg: "#facc15" };
-  if (s === "gn") return { bg: "rgba(99, 102, 241, 0.18)", fg: "#818cf8" };
-  if (s.includes("announcement")) return { bg: "rgba(59, 130, 246, 0.18)", fg: "#60a5fa" };
-  if (s.includes("product")) return { bg: "rgba(168, 85, 247, 0.18)", fg: "#c084fc" };
-  if (s.includes("growth")) return { bg: "rgba(34, 197, 94, 0.18)", fg: "#4ade80" };
-  if (s.includes("community")) return { bg: "rgba(236, 72, 153, 0.18)", fg: "#f472b6" };
-  if (s.includes("market")) return { bg: "rgba(249, 115, 22, 0.18)", fg: "#fb923c" };
-  return { bg: "rgba(63, 167, 150, 0.18)", fg: "#3fa796" }; // generic fallback
+async function recordClaim(tweetId) {
+    try {
+        const response = await fetch("/claim", {
+            method: "POST",
+            headers: {
+                "Content-Type": "application/json"
+            },
+            body: JSON.stringify({})
+        });
+
+        const data = await response.json();
+
+        if (!response.ok || !data.ok) {
+            throw new Error(data.message || "Could not record claim.");
+        }
+
+        return data;
+    } catch (error) {
+        console.error("Claim request failed:", error);
+        return {
+            ok: false,
+            reason: "network_error"
+        };
+    }
 }
 
-// Display clickable links styled as console rows, with category tag chips.
-// Locking/unlocking is entirely driven by the batch-gate system (see
-// applyBatchLocks / updatePacingUI above) - this function just builds the rows.
-// restoredState (optional) lets a reload/re-login resume exactly where the
-// batch was left off, instead of always starting a fresh batch at 0.
-const displayLinks = (restoredState) => {
-  clearLinkList();
-  liElements = [];
 
-  if (restoredState) {
-    activeBatchStart = restoredState.activeBatchStart;
-    claimsInBatch = restoredState.claimsInBatch;
-    batchLocked = restoredState.batchLocked;
-    cooldownUntil = restoredState.cooldownUntil;
-  } else {
-    activeBatchStart = 0;
-    claimsInBatch = 0;
-    batchLocked = false;
-    cooldownUntil = 0;
-  }
+async function checkSharedClaims(tweetIds) {
+    if (!Array.isArray(tweetIds) || tweetIds.length === 0) {
+        return {};
+    }
 
-  linkCommentPairs.forEach((pair, index) => {
-    const li = document.createElement("li");
-    li.className = "link-row p-3 flex items-center gap-2";
-
-    const linkText = document.createElement("span");
-    linkText.className = "truncate flex-1";
-
-    const tag = document.createElement("span");
-    tag.className = "tag";
-    tag.textContent = pair.source;
-    const tagColor = getTagColor(pair.source);
-    tag.style.background = tagColor.bg;
-    tag.style.color = tagColor.fg;
-
-    const statusText = document.createElement("span");
-    statusText.className = "text-xs";
-    statusText.style.color = "var(--muted)";
-
-    const skipBtn = document.createElement("button");
-    skipBtn.className = "skip-btn";
-    skipBtn.type = "button";
-    skipBtn.title = "Remove from queue";
-    skipBtn.textContent = "✕";
-    skipBtn.addEventListener("click", (e) => {
-      e.stopPropagation(); // don't trigger the row's claim handler
-      linkCommentPairs.splice(index, 1);
-      displayLinks(); // batch position resets on any queue edit - simplest correct behavior
+    const response = await fetch("/check-claims", {
+        method: "POST",
+        headers: {
+            "Content-Type": "application/json"
+        },
+        body: JSON.stringify({ tweetIds })
     });
 
-    if (pair.claimed) {
-      // Restoring a link that was already claimed before reload - render
-      // it as claimed immediately, no click handler needed.
-      li.dataset.claimed = "true";
-      linkText.textContent = pair.link + " ✓ claimed";
-      statusText.textContent = "claimed";
-      li.classList.add("claimed");
-      li.appendChild(linkText);
-      li.appendChild(statusText);
-    } else {
-      li.dataset.claimed = "false";
-      linkText.textContent = pair.link;
-      statusText.textContent = "active";
-      li.appendChild(linkText);
-      li.appendChild(tag);
-      li.appendChild(statusText);
-      li.appendChild(skipBtn);
+    const data = await response.json();
 
-      li.addEventListener("click", function handler() {
-        if (li.classList.contains("locked")) return; // batch gate guard
+    if (!response.ok || !data.ok) {
+        throw new Error(
+            data.reason || "Could not check claim history."
+        );
+    }
 
-        const tweetIdMatch = pair.link.match(/status\/(\d+)/);
-        if (!tweetIdMatch) return alert("Invalid X link format.");
-        const tweetId = tweetIdMatch[1];
+    return data.claims || {};
+}
 
-        window.open(
-          `https://twitter.com/intent/tweet?in_reply_to=${tweetId}&text=${encodeURIComponent(pair.comment)}`,
-          "_blank"
+
+// ============================================================
+// SERVER-SIDE JOB POLLING
+// ============================================================
+
+function addFinishedJobItems(job) {
+    let addedAny = false;
+
+    for (const item of job.items || []) {
+        if (item.status !== "completed" && item.status !== "failed") {
+            continue;
+        }
+
+        const key = String(item.id);
+
+        if (generationResultsSeen.has(key)) {
+            continue;
+        }
+
+        generationResultsSeen.add(key);
+        addedAny = true;
+
+        if (item.status === "completed") {
+            linkCommentPairs.push({
+                id: key,
+                link: item.url,
+                tweetText: item.tweetText || "",
+                comment: item.comment,
+                replyUrl: item.replyUrl,
+                source: "AI",
+                claimed: false,
+                failed: false
+            });
+        } else {
+            linkCommentPairs.push({
+                id: key,
+                link: item.url,
+                tweetText: item.tweetText || "",
+                comment: "",
+                source: "Failed",
+                claimed: false,
+                failed: true,
+                error: item.error || "Generation failed."
+            });
+        }
+    }
+
+    if (addedAny) {
+        displayLinks(preservePacingState());
+    }
+}
+
+async function pollGenerationJob(jobId) {
+    while (activeGenerationJobId === jobId) {
+        const response = await fetch(
+            `/jobs/${encodeURIComponent(jobId)}/poll`,
+            {
+                method: "POST",
+                headers: {
+                    "Content-Type": "application/json"
+                },
+                body: JSON.stringify({})
+            }
         );
 
-        pair.claimed = true;
-        li.dataset.claimed = "true";
-        linkText.textContent = pair.link + " ✓ claimed";
-        statusText.textContent = "claimed";
-        tag.remove();
-        skipBtn.remove();
-        li.classList.add("claimed");
-        li.removeEventListener("click", handler);
+        const data = await response.json();
 
-        registerClaim();
+        if (!response.ok || !data.ok || !data.job) {
+            throw new Error(
+                data.message ||
+                data.reason ||
+                "Could not retrieve job progress."
+            );
+        }
 
-        // Record it under your account so a future batch of yours doesn't
-        // send you back to this same tweet.
-        recordClaim(tweetId);
-      });
+        const job = data.job;
+        addFinishedJobItems(job);
+
+        const processed = (job.completed || 0) + (job.failed || 0);
+
+        setGenerationStatus(
+            `Stage: ${job.stage} · ` +
+            `Processed ${processed}/${job.total} · ` +
+            `Read ${job.read}/${job.total} · ` +
+            `Replies ${job.completed} · ` +
+            `Failed ${job.failed}`
+        );
+
+        generateBtn.textContent =
+            `Generating ${processed}/${job.total}...`;
+
+        if (job.status === "completed" || job.status === "failed") {
+            if (job.status === "failed") {
+                throw new Error(
+                    job.error || "The generation job failed."
+                );
+            }
+
+            return job;
+        }
+
+        // This only controls UI polling. It does not delay server-side batches.
+        await new Promise(resolve => setTimeout(resolve, 800));
     }
 
-    linkList.appendChild(li);
-    liElements[index] = li;
-  });
-
-  updatePacingUI();
-};
-
-// Set to true only if you have ANTHROPIC_API_KEY configured server-side
-// and want AI refinement for edge cases the rules can't resolve.
-const AI_REFINEMENT_ENABLED = false;
-
-// ====== EVENT LISTENERS ======
-
-// Extract links from textarea
-extractBtn.addEventListener("click", () => {
-  extractedLinks = extractLinks(linksInput.value);
-  alert(`Extracted ${extractedLinks.length} links.`);
-});
-
-if (clearLinksInputBtn) {
-  clearLinksInputBtn.addEventListener("click", () => {
-    linksInput.value = "";
-    linksInput.focus();
-  });
+    return null;
 }
 
-// ==== GENERATE COMMENT BUTTON ====
-generateBtn.addEventListener("click", async () => {
-  if (!extractedLinks.length) {
-    alert("No links extracted yet!");
+// ============================================================
+// GENERATE BUTTON
+// ============================================================
+
+if (generateBtn) {
+    generateBtn.addEventListener("click", async () => {
+        if (!extractedLinks.length) {
+            alert("No links extracted yet!");
+            return;
+        }
+
+        if (!currentUser.id) {
+    alert("Please sign in with Google again.");
     return;
-  }
+}
 
-  generateBtn.disabled = true;
-  const originalLabel = generateBtn.textContent;
-  generateBtn.textContent = "Checking your history...";
+        if (activeGenerationJobId) {
+            alert("A generation job is already running.");
+            return;
+        }
 
-  // Skip anything YOU already replied to (from this account, any device) -
-  // other accounts' claims don't factor in here on purpose.
-  const tweetIdMap = extractedLinks.map((link) => ({ link, tweetId: extractTweetId(link) }));
-  const validTweetIds = tweetIdMap.filter((x) => x.tweetId).map((x) => x.tweetId);
-  const claims = await checkSharedClaims(validTweetIds);
+        generateBtn.disabled = true;
+        const originalLabel = generateBtn.textContent;
 
-  const skipped = [];
-  const linksToProcess = tweetIdMap
-    .filter(({ tweetId }) => {
-      if (tweetId && claims[tweetId]) {
-        skipped.push(tweetId);
-        return false;
-      }
-      return true;
+        try {
+            generateBtn.textContent = "Checking claim history...";
+            setGenerationStatus("Checking which posts still need replies...");
+
+            const tweetIdMap = extractedLinks.map(link => ({
+                link,
+                tweetId: extractTweetId(link)
+            }));
+
+            const validTweetIds = tweetIdMap
+                .filter(item => item.tweetId)
+                .map(item => item.tweetId);
+
+            const claims = await checkSharedClaims(validTweetIds);
+            const skipped = [];
+
+            const linksToProcess = tweetIdMap
+                .filter(({ tweetId }) => {
+                    if (tweetId && claims[tweetId]) {
+                        skipped.push(tweetId);
+                        return false;
+                    }
+
+                    return true;
+                })
+                .map(item => item.link);
+
+            if (!linksToProcess.length) {
+                setGenerationStatus(
+                    `Nothing to generate. Skipped ${skipped.length} ` +
+                    "post(s) already marked as replied to."
+                );
+
+                alert(
+                    `Skipped ${skipped.length} tweet(s) you've already replied to.`
+                );
+
+                return;
+            }
+
+            linkCommentPairs = [];
+            generationResultsSeen = new Set();
+            displayLinks();
+
+            generateBtn.textContent = "Starting job...";
+            setGenerationStatus(
+                `Submitting ${linksToProcess.length} posts to the server...`
+            );
+
+           
+const createResponse = await fetch("/jobs", {
+    method: "POST",
+    headers: {
+        "Content-Type": "application/json"
+    },
+    body: JSON.stringify({
+        links: linksToProcess,
     })
-    .map((x) => x.link);
+});
 
-  linkCommentPairs = [];
 
-  for (const link of linksToProcess) {
-    generateBtn.textContent = "Reading tweet...";
-    const tweetText = await fetchTweetText(link);
+            const createData = await createResponse.json();
 
-    const { category, score, keyword } = categorizeTweet(tweetText);
-    const signals = detectFormatSignals(tweetText);
-    const topic = extractTopic(tweetText);
-    let { comment, source } = pickComment(category, signals, keyword, topic);
-    let refined = false;
+            if (!createResponse.ok || !createData.ok || !createData.jobId) {
+                throw new Error(
+                    createData.message ||
+                    createData.reason ||
+                    "Could not start the generation job."
+                );
+            }
 
-    // AI is off by default (no cost). If ever enabled, only spend a call
-    // when nothing else - not even topic extraction - found anything to go on.
-    const needsRefinement = AI_REFINEMENT_ENABLED && tweetText && score === 0 && !topic;
+            activeGenerationJobId = createData.jobId;
 
-    if (needsRefinement) {
-      generateBtn.textContent = "Refining...";
-      const aiComment = await refineComment(tweetText, category, comment);
-      if (aiComment) {
-        comment = aiComment;
-        refined = true;
-        source = "AI";
-      }
+            generateBtn.textContent =
+                `Generating 0/${createData.total}...`;
+
+            const job = await pollGenerationJob(createData.jobId);
+
+            if (job) {
+                setGenerationStatus(
+                    `Finished: ${job.completed} replies generated, ` +
+                    `${job.failed} failed out of ${job.total}.` +
+                    (skipped.length
+                        ? ` Skipped ${skipped.length} already-claimed post(s).`
+                        : "")
+                );
+
+                if (job.failed > 0) {
+                    alert(
+                        `Generated ${job.completed} of ${job.total} replies. ` +
+                        `${job.failed} failed. Use Retry on failed rows.`
+                    );
+                } else if (skipped.length) {
+                    alert(
+                        `Generated ${job.completed} replies. ` +
+                        `Skipped ${skipped.length} already-claimed post(s).`
+                    );
+                }
+            }
+        } catch (error) {
+            console.error("YAPASSIST generation failed:", error);
+
+            setGenerationStatus(`Generation error: ${error.message}`);
+            alert(error.message || "Generation failed.");
+        } finally {
+            activeGenerationJobId = null;
+            generateBtn.disabled = false;
+            generateBtn.textContent = originalLabel;
+        }
+    });
+}
+
+// ============================================================
+// UI
+// ============================================================
+
+function clearLinkList() {
+    if (linkList) {
+        linkList.innerHTML = "";
+    }
+}
+
+function displayLinks(restoredState) {
+    clearLinkList();
+    liElements = [];
+
+    if (!linkList) return;
+
+    if (restoredState) {
+        activeBatchStart = restoredState.activeBatchStart;
+        claimsInBatch = restoredState.claimsInBatch;
+        batchLocked = restoredState.batchLocked;
+        cooldownUntil = restoredState.cooldownUntil;
+    } else {
+        activeBatchStart = 0;
+        claimsInBatch = 0;
+        batchLocked = false;
+        cooldownUntil = 0;
     }
 
-    linkCommentPairs.push({ link, comment, source: refined ? "AI" : source, claimed: false });
-  }
+    linkCommentPairs.forEach((pair, index) => {
+        const li = document.createElement("li");
+        li.className = "link-row p-3 flex items-center gap-2";
 
-  generateBtn.disabled = false;
-  generateBtn.textContent = originalLabel;
+        const linkText = document.createElement("span");
+        linkText.className = "truncate flex-1";
 
-  linksInput.value = ""; // ready for the next batch of links to be pasted
+        const tag = document.createElement("span");
+        tag.className = "tag";
+        tag.textContent = pair.failed ? "Failed" : "AI";
+        tag.style.background = pair.failed
+            ? "rgba(239, 68, 68, 0.18)"
+            : "rgba(168, 85, 247, 0.18)";
+        tag.style.color = pair.failed ? "#f87171" : "#c084fc";
 
-  displayLinks();
+        const statusText = document.createElement("span");
+        statusText.className = "text-xs";
+        statusText.style.color = "var(--muted)";
 
-  if (skipped.length) {
-    alert(`Skipped ${skipped.length} tweet(s) you've already replied to.`);
-  }
-});
+        const skipBtn = document.createElement("button");
+        skipBtn.className = "skip-btn";
+        skipBtn.type = "button";
+        skipBtn.title = "Remove from queue";
+        skipBtn.textContent = "✕";
+
+        skipBtn.addEventListener("click", event => {
+            event.stopPropagation();
+            linkCommentPairs.splice(index, 1);
+            displayLinks(preservePacingState());
+        });
+
+        // --------------------------------------------------------
+        // FAILED ROW + RETRY
+        // --------------------------------------------------------
+
+        if (pair.failed) {
+            li.dataset.failed = "true";
+            linkText.textContent = pair.link;
+            statusText.textContent = pair.error || "Generation failed";
+
+            const retryBtn = document.createElement("button");
+            retryBtn.className = "retry-btn";
+            retryBtn.type = "button";
+            retryBtn.textContent = "Retry";
+
+            retryBtn.addEventListener("click", async event => {
+                event.stopPropagation();
+
+                retryBtn.disabled = true;
+                retryBtn.textContent = "Retrying...";
+
+                try {
+                    const tweetMap = await fetchTweetsText([pair.link]);
+                    const tweetId = extractTweetId(pair.link);
+                    const tweetText = tweetMap[tweetId]?.text;
+
+                    if (!tweetText) {
+                        throw new Error("Could not read this X post.");
+                    }
+
+                    const comment = await generateAIReply(tweetText);
+
+                    if (!comment) {
+                        throw new Error("Gemini did not return a reply.");
+                    }
+
+                    linkCommentPairs[index] = {
+                        id: tweetId,
+                        link: pair.link,
+                        comment,
+                        source: "AI",
+                        claimed: false,
+                        failed: false,
+                        tweetText,
+                        replyUrl:
+                            `https://twitter.com/intent/tweet?in_reply_to=` +
+                            `${encodeURIComponent(tweetId)}&text=` +
+                            `${encodeURIComponent(comment)}`
+                    };
+
+                    displayLinks(preservePacingState());
+                } catch (error) {
+                    console.error("Retry failed:", error);
+
+                    pair.error = error.message || "Generation failed.";
+                    retryBtn.disabled = false;
+                    retryBtn.textContent = "Retry";
+                    statusText.textContent = pair.error;
+                }
+            });
+
+            li.appendChild(linkText);
+            li.appendChild(tag);
+            li.appendChild(statusText);
+            li.appendChild(retryBtn);
+            li.appendChild(skipBtn);
+
+            linkList.appendChild(li);
+            liElements[index] = li;
+            return;
+        }
+
+        // --------------------------------------------------------
+        // CLAIMED ROW
+        // --------------------------------------------------------
+
+        if (pair.claimed) {
+            li.dataset.claimed = "true";
+            linkText.textContent = `${pair.link} ✓ claimed`;
+            statusText.textContent = "claimed";
+            li.classList.add("claimed");
+
+            li.appendChild(linkText);
+            li.appendChild(statusText);
+        } else {
+            // ----------------------------------------------------
+            // ACTIVE ROW
+            // ----------------------------------------------------
+
+            li.dataset.claimed = "false";
+            linkText.textContent = pair.link;
+            statusText.textContent = "active";
+
+            li.appendChild(linkText);
+            li.appendChild(tag);
+            li.appendChild(statusText);
+            li.appendChild(skipBtn);
+
+            li.addEventListener("click", function handler() {
+                if (li.classList.contains("locked")) return;
+
+                const tweetId = extractTweetId(pair.link);
+
+                if (!tweetId) {
+                    alert("Invalid X link format.");
+                    return;
+                }
+
+                const replyUrl = pair.replyUrl ||
+                    `https://twitter.com/intent/tweet?in_reply_to=` +
+                    `${encodeURIComponent(tweetId)}&text=` +
+                    `${encodeURIComponent(pair.comment || "")}`;
+
+                // Open the reply intent only after the user's click.
+                window.open(replyUrl, "_blank", "noopener,noreferrer");
+
+                pair.claimed = true;
+                li.dataset.claimed = "true";
+                linkText.textContent = `${pair.link} ✓ claimed`;
+                statusText.textContent = "claimed";
+
+                tag.remove();
+                skipBtn.remove();
+                li.classList.add("claimed");
+
+                li.removeEventListener("click", handler);
+
+                registerClaim();
+                recordClaim(tweetId);
+            });
+        }
+
+        linkList.appendChild(li);
+        liElements[index] = li;
+    });
+
+    updatePacingUI();
+}
+
+// ============================================================
+// EXTRACT BUTTON
+// ============================================================
+
+if (extractBtn) {
+    extractBtn.addEventListener("click", () => {
+        extractedLinks = extractLinks(linksInput.value);
+
+        alert(`Extracted ${extractedLinks.length} links.`);
+    });
+}
+
+// ============================================================
+// CLEAR INPUT
+// ============================================================
+
+if (clearLinksInputBtn) {
+    clearLinksInputBtn.addEventListener("click", () => {
+        linksInput.value = "";
+        linksInput.focus();
+    });
+}
