@@ -907,7 +907,7 @@ function displayLinks(restoredState) {
             li.appendChild(statusText);
             li.appendChild(skipBtn);
 
-            li.addEventListener("click", function handler() {
+            li.addEventListener("click", async function handler() {
                 if (li.classList.contains("locked")) return;
 
                 const tweetId = extractTweetId(pair.link);
@@ -917,13 +917,28 @@ function displayLinks(restoredState) {
                     return;
                 }
 
-                const replyUrl = pair.replyUrl ||
-                    `https://twitter.com/intent/tweet?in_reply_to=` +
-                    `${encodeURIComponent(tweetId)}&text=` +
-                    `${encodeURIComponent(pair.comment || "")}`;
+const isAndroid = /Android/i.test(navigator.userAgent);
 
-                // Open the reply intent only after the user's click.
-                window.open(replyUrl, "_blank", "noopener,noreferrer");
+if (isAndroid) {
+    try {
+        await navigator.clipboard.writeText(pair.comment || "");
+
+        window.open(pair.link, "_blank", "noopener,noreferrer");
+
+        statusText.textContent = "Reply copied! Open the post and paste it.";
+    } catch (error) {
+        statusText.textContent =
+            "Could not copy automatically. Copy the comment manually, then reply on X.";
+        return;
+    }
+} else {
+    const replyUrl = pair.replyUrl ||
+        `https://x.com/intent/tweet?in_reply_to=` +
+        `${encodeURIComponent(tweetId)}&text=` +
+        `${encodeURIComponent(pair.comment || "")}`;
+
+    window.open(replyUrl, "_blank", "noopener,noreferrer");
+}
 
                 pair.claimed = true;
                 li.dataset.claimed = "true";
