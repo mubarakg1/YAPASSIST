@@ -171,6 +171,42 @@ let cooldownUntil = 0;
 
 let activeGenerationJobId = null;
 let generationResultsSeen = new Set();
+
+
+async function copyReplyText(text) {
+    try {
+        if (navigator.clipboard?.writeText) {
+            await navigator.clipboard.writeText(text);
+            return true;
+        }
+    } catch (error) {
+        console.warn("Clipboard API failed; trying fallback.", error);
+    }
+
+    const textarea = document.createElement("textarea");
+    textarea.value = text;
+    textarea.setAttribute("readonly", "");
+    textarea.style.position = "fixed";
+    textarea.style.left = "-9999px";
+    textarea.style.top = "0";
+
+    document.body.appendChild(textarea);
+    textarea.focus();
+    textarea.select();
+    textarea.setSelectionRange(0, textarea.value.length);
+
+    let copied = false;
+
+    try {
+        copied = document.execCommand("copy");
+    } catch (error) {
+        console.error("Clipboard fallback failed:", error);
+    } finally {
+        textarea.remove();
+    }
+
+    return copied;
+}
 // ============================================================
 // PACING CONTROLS
 // ============================================================
@@ -435,7 +471,7 @@ async function recordClaim(tweetId) {
             headers: {
                 "Content-Type": "application/json"
             },
-           body: JSON.stringify({})
+           body: JSON.stringify({ tweetId: String(tweetId) })
         });
 
         const data = await response.json();
@@ -463,7 +499,7 @@ async function recordClaim(tweetId) {
             headers: {
                 "Content-Type": "application/json"
             },
-            body: JSON.stringify({})
+            body: JSON.stringify({ tweetId: String(tweetId) })
         });
 
         const data = await response.json();
@@ -907,54 +943,108 @@ function displayLinks(restoredState) {
             li.appendChild(statusText);
             li.appendChild(skipBtn);
 
-            li.addEventListener("click", async function handler() {
-                if (li.classList.contains("locked")) return;
 
-                const tweetId = extractTweetId(pair.link);
+    li.addEventListener("click", async function handler() {
+    if (li.classList.contains("locked")) return;
 
-                if (!tweetId) {
-                    alert("Invalid X link format.");
-                    return;
-                }
+    const tweetId = extractTweetId(pair.link);
 
-const isAndroid = /Android/i.test(navigator.userAgent);
-
-if (isAndroid) {
-    try {
-        await navigator.clipboard.writeText(pair.comment || "");
-
-        window.open(pair.link, "_blank", "noopener,noreferrer");
-
-        statusText.textContent = "Reply copied! Open the post and paste it.";
-    } catch (error) {
-        statusText.textContent =
-            "Could not copy automatically. Copy the comment manually, then reply on X.";
+    if (!tweetId) {
+        alert("Invalid X link format.");
         return;
     }
-} else {
+
+    const isAndroid = /Android/i.test(navigator.userAgent);
+
+    if (isAndroid) {
+    // Open a new tab immediately while the click is still active.
+    const xTab = window.open("about:blank", "_blank");
+
+    // Copy the AI reply.
+    const copied = await copyReplyText(pair.comment || "");
+
+    if (!copied) {
+        if (xTab) xTab.close();
+        statusText.textContent =
+            "Copy failed. Please copy the reply manually.";
+        return;
+    }
+
+    if (!xTab) {
+        statusText.textContent =
+            "Popup blocked. Allow popups for YAPASSIST and try again.";
+        return;
+    }
+
+    xTab.opener = null;
+    xTab.location.href = pair.link;
+
+    statusText.textContent =
+        "Copied ✓ Open the post and paste your reply.";
+
+    // Only record the claim after the user confirms replying.
+    const repliedBtn = document.createElement("button");
+    repliedBtn.type = "button";
+    repliedBtn.className = "retry-btn";
+    repliedBtn.textContent = "I replied";
+
+    repliedBtn.addEventListener("click", async event => {
+        event.stopPropagation();
+
+        repliedBtn.disabled = true;
+        repliedBtn.textContent = "Saving...";
+
+        const result = await recordClaim(tweetId);
+
+        if (!result || !result.ok) {
+            repliedBtn.disabled = false;
+            repliedBtn.textContent = "I replied";
+            statusText.textContent =
+                "Couldn't save the claim. Try again.";
+            return;
+        }
+
+        pair.claimed = true;
+        li.dataset.claimed = "true";
+        linkText.textContent = `${pair.link} ✓ claimed`;
+        statusText.textContent = "claimed";
+
+        tag.remove();
+        skipBtn.remove();
+        repliedBtn.remove();
+        li.classList.add("claimed");
+        li.removeEventListener("click", handler);
+
+        registerClaim();
+    });
+
+    li.appendChild(repliedBtn);
+    li.removeEventListener("click", handler);
+    return;
+}
+
+    // Preserve the existing reply-intent flow on iPhone and desktop.
     const replyUrl = pair.replyUrl ||
         `https://x.com/intent/tweet?in_reply_to=` +
         `${encodeURIComponent(tweetId)}&text=` +
         `${encodeURIComponent(pair.comment || "")}`;
 
     window.open(replyUrl, "_blank", "noopener,noreferrer");
-}
 
-                pair.claimed = true;
-                li.dataset.claimed = "true";
-                linkText.textContent = `${pair.link} ✓ claimed`;
-                statusText.textContent = "claimed";
+    pair.claimed = true;
+    li.dataset.claimed = "true";
+    linkText.textContent = `${pair.link} ✓ claimed`;
+    statusText.textContent = "claimed";
 
-                tag.remove();
-                skipBtn.remove();
-                li.classList.add("claimed");
+    tag.remove();
+    skipBtn.remove();
+    li.classList.add("claimed");
+    li.removeEventListener("click", handler);
 
-                li.removeEventListener("click", handler);
-
-                registerClaim();
-                recordClaim(tweetId);
-            });
-        }
+    registerClaim();
+    recordClaim(tweetId);
+});
+       }
 
         linkList.appendChild(li);
         liElements[index] = li;
