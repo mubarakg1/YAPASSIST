@@ -424,20 +424,31 @@ app.post("/claim", requireAuth, async (req, res) => {
   }
 });
 
+
 app.post("/extract", (req, res) => {
   const text = String(req.body.text || "");
-  const matches = text.match(
-    /https?:\/\/(?:www\.)?(?:x\.com|twitter\.com)\/[^\s)]+/gi
-  ) || [];
+
+  // Extract X/Twitter status links from anywhere in pasted text.
+  const pattern =
+    /(?:https?:\/\/)?(?:www\.)?(?:x\.com|twitter\.com)\/[A-Za-z0-9_]+\/status\/\d+/gi;
+
+  const matches = text.match(pattern) || [];
 
   const links = [...new Set(
     matches
-      .map((url) => url.replace(/[.,)\]}]+$/g, ""))
+      .map((url) => {
+        const clean = url
+          .replace(/^https?:\/\//i, "")
+          .replace(/^www\./i, "");
+
+        return `https://${clean}`;
+      })
       .filter((url) => extractTweetId(url))
   )];
 
   return res.json({ links });
 });
+
 
 // ============================================================
 // URL VALIDATION
